@@ -5,9 +5,10 @@ A rotating Earth in your terminal, drawn with Unicode Braille dots. Think `cmatr
 ![earth running in a terminal](docs/earth.gif)
 
 - One file, no dependencies: needs only Python 3.
-- Real coastlines from [Natural Earth](https://www.naturalearthdata.com/), embedded in the script. Works offline.
+- Real coastlines from [Natural Earth](https://www.naturalearthdata.com/) (1:50m), embedded in the script. Works offline.
 - Round globe on any font: corrects for the terminal's cell shape.
-- Flicker-free, adapts to window resizing, restores the terminal on exit.
+- Flicker-free and light on CPU: only changed characters are redrawn.
+- Adapts to window resizing, restores the terminal on exit.
 
 ## Install
 
@@ -33,7 +34,7 @@ To uninstall, delete the file: `sudo rm /usr/local/bin/earth`.
 ## Usage
 
 ```
-earth [-s SPEED] [-f FPS] [-z SIZE] [--start LON]
+earth [-s SPEED] [-f FPS] [-z SIZE] [--start LON] [--bg R,G,B]
 ```
 
 | option | meaning | default |
@@ -42,6 +43,7 @@ earth [-s SPEED] [-f FPS] [-z SIZE] [--start LON]
 | `-f, --fps` | frames per second | 30 |
 | `-z, --size` | globe size as a fraction of the window (0.2–1) | 1.0 |
 | `--start` | longitude facing you at start | 15 |
+| `--bg` | background colour around the globe, e.g. `0,0,0` for black | `14,22,16` (dark green) |
 | `-V, --version` | print version | |
 
 Keys: `q` / `Esc` / `Ctrl+C` quit, `space` pause, `+` / `-` change speed.

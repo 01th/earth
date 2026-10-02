@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """earth: a rotating Earth in the terminal, drawn with Unicode Braille dots.
 
-A single file with no dependencies beyond Python 3. The land map (Natural Earth 1:110m,
-0.5° grid) is embedded below in compressed form.
+A single file with no dependencies beyond Python 3. The land map (Natural Earth 1:50m,
+0.25° grid) is embedded below in compressed form.
 """
 import argparse
 import base64
@@ -18,87 +18,208 @@ import time
 import tty
 import zlib
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
-W, H = 720, 360  # land mask: 0.5° per cell, row 0 = 90°N, column 0 = 180°W
-W2 = W * 2  # columns after upsampling to 0.25°
+W, H = 1440, 720  # land mask: 0.25° per cell, row 0 = 90°N, column 0 = 180°W
 # Braille dot (dx, dy) -> bit inside a 2x4 cell.
 BITS = ((0, 0, 1), (0, 1, 2), (0, 2, 4), (1, 0, 8), (1, 1, 16), (1, 2, 32), (0, 3, 64), (1, 3, 128))
+FADE_IN, FADE_OUT = 0.82, 1.12  # background fade band, in globe radii
 TILT = math.radians(23)  # camera elevation above the equator
 LIGHT = (-0.55, -0.45, 0.70)  # light from the upper left
-BG = "\x1b[48;2;0;0;0m"
+BG_RGB = (14, 22, 16)  # around the globe: very dark green
+BG = "\x1b[48;2;14;22;16m"
 
 MAP = """
-c-rlqL2uo-
-5rC;xU@lPCL~jP_nE44QdU1i&+C%UA7hLqP*A#p4qOPSNi{?_SZ#`|1{)`@qwE`ELTfN5uEgBgqnmu*p`d|jpk|ilhPZWm~CHpN<
-)I22d^LyVL4QGZkLrOvDZrqK#aX0>lh7f|^A}*6WQOSQ$^$*e98aNk*e3acP*MMs+c>7OsJM^?wL7j`i@V`BoF=uBA#mNv{+Hb*M
-46d+_7FmctNJZ2`aMk^i3Z}`cZ%X1#Cuv~?9*~V#>D60zK66n-
-aW@bm;#%o7bCn^#%%u?Vrx<XR@_nt~VhHYdsQ~56t0<xA^Wsoahq_qt^5z&)UxYfaRA^Es*HW<{8MC}t79;vtQ6LQ21_7^|PHF>l
-w5g`)L>a?S&#(v5UPqI5m%V5x%9s=kBU@%TY89Pv3=H1uBrjRUQifO;Ku3BWUSMa6`VGu{nU5^Lou!xWIw7+Vx$~ZU;7XY|_X$tb
-J6K1?0c|7#4c=oEEtOcqx^N?i7=F-
-F23sk)_x?b@P`KZUYWoMn2m;DXYfE7l?W>2r`Qry@7rzzHu8fqP7^=zTK+DQ7^%Z9xa~9&8-
-!s}YMDWs*2$&W%so9q(x5HNLvy4;08^ReCymjL4a}V7&tBcBCQk$HDm#1Ww@8bzSq}`kduguys#B(dSlx5NxHflX0?X0y)lo=%LI
-#mqJ4!FpykP@C+<jcWir)Hj3Ymp=-Z3I=c-
-S#8jvY~=m7lp7m7r<DVC^Z5mr52JUChD(da47PR`|Fi5gJfanLygqj^&=&0v!5gKX}d0Ej&sX7`qoTRor+f;GHE|y<WhgU&}qi$K
-Zz7v&vHHvqO^}bC@(!^A)aZorNfuLVSDNo(wMbAADc$rX=iUMXZai99c)CdQ;xDsP?nsCva<~~&KP*Y(ku0kYd={G!j3kax8kk*D
-{JtX5*m-gkuk%vX=mVdfLtO3z1-lZYTn3rsWKVag-
-M{!17!K}40yHH_J{D;=FEF5<J2@nuE`0gej;R??3|H(R1GGO<;H_V?&qG`iQyoPlLk_0nQJ|7Rk!A`T&hP*k0%^~-
->alOE3_#LGEnui%-5SFf{cz4edoUXs-m5+#;ohkG%7izN7G<#ucQ5-Y?COP=*ZNBUD6s_Hcgh-Sl9+_DwI=`a2s;k^rmqlqK5pyE
-?{-lmV)Y4W9WeD5*iv!21FKmMWA15HB`2r)L9&vgKCzqUcCByQfpRa`$-I$o48A$E0F=o7{kZ|s|am0CWsMeUgfK08|X(eSJN^-
-xil*{Zhdi7NRe*2D`#sXd1)4`U#Xv*1YeTh8x?+<ER*Ye$||VX=@y`-
-u`Hz0SJGgpgU}$9Px;942dlEQwBFx#9~$B$&DphD*@NTktU>)!@qKO9)V6Z@BXtrf`dXA}5L^!&woAuT+sfVALuy<uG-
-Wt~mV?Y%QO<4a>-@*gxs-AeQQi~b6-rg3tBc$p+4Vtt3Ct-
-p?u%l7GIkDXxT9_4sKX_zB%h7SamdF8U5TU~l@98n0GXxQn;d0R6F49n8%V}W_ozA{@{6unm|SX3KR<_7U&;tgohne)pXjOxlUuE
-J<g~JLiB<k+NBt`~<&V)%CMPg)^Y~$WZ2Mk~RsZF3u3v{e@Xwo2w*#M8E8#e!BXy3Z^Ndd+a{A0658s2YCM>Sghf7X|WCoGzJZkx
-4PK+#vLDnIY3pi1WArH04^KrS2vACEf{{w+_tn<Eig_Uf)nI`{5zVW~<OC2@7v}Tw`EZgUyuI0d{$?(@(5vJiGqo3OEx+v}S>ivk
-+=mhTOQCl6w9&M0YqbwogQ#*%384D;29G`o7GTF#BGY&PCLSqNTOkp$X9mZs!n=#~XI6~YP3w`;~Zj{X8DcXc*&|6?K>fi1ej%%l
-Z)e6>lt%Q9qjx1m@+oz!wHiCTBxa8-
-~K8wA=Zb#{P+&sm)B_com$m`}soYhgcQF!`PFa6lNcGCwDWVYkBkjX{Y@bkp|tcoDlZeMqYC><AGr;(+8<=a+*Hk5i@aP$$Q!)}`
-+aw1~%43R%>uqIQF$jQHA$jl)(=s-M?+7KRcjgl&Y%w1K<@5;|)DIz@ORSm6yQREWU<Vt+zb(G56e@;S<syD-
-G{5NkK;<^0hq>k|J+VvADQu3nlxC!6SkymCEFpZ8}aZjLY_V!Vn%%$srs<<kTu`kSJh1WL5+W})etEnh5;v?tfD$56V<~{pKskRm
-w8J>BxagddE{qI}pT(UH0smn*caKvzhK3qbU^&l3_2HH)$ZO{sd(!bT_C+{FrxNN_L*OL$#hsc|0UlPGlA6JQ&oCdXFdRGkn5)Pr
-H65dVZ)E_o_vK$v4a_AgD?u((uBv~MLED(NI`ghTVf2V3ydZr%oR$wojcwMl?@c_9*+1G&$Z~p{h<HLK%lN3~l9t4kW_$IL1$>n}
-BK@sG}r>I0!9&(MgLVLV#rpR)Ir6+44zZHR1Ff`i!MMIllOj$y{YRMau<P)&(6&SjiQyrnBV1za4Ze&*8j{C-z_k-
-)r67sIG<^8Ej<7_VZxNR}JyZA$oerNVo-CkYj)Cu*F@n~P$P3<PgYD-VIpC1KGLv?-
-FZU(e*L+<^uC6jvr(_q@hPJ<<$>x3OSWExCqBAH8m-
-I8&LtQ%u#AzoUm)x!z$g>k0s0GZ1lI3AT)&EpB7AA87_cuMJHL}pXuy{sj_A0iVIC#--
-pbuw^=f}zD;uCWQUR_;1^_Nyh2trH+~Tlr{`thd6Fa~3K>&y1OA^0)ejuh9olWQ3YYGB@s1#&}>GAR4s|vF{HX=AZ&^UB2B`_jDi
-9F_~7YvvZKlFS?~todr_l#zRJhr46q3L2w-^$-
-8)*>)xAxrLrm_Rh`KyNoK<Va=s$hO561#54s%HP>P&30dlq?mzsPObxKkcy7J=_WOG2L(B#7ya;{Bvm;UF_-
-=OHoS$jlCu!r6QaHG`&p?j8!Mr3safVUB_wY>)3H~`ktiMXMfjE3Bpo=OZEL1f#WIW|c^)}DLuZFaaZiBHJPyEDa^`U3J?{ggzIQ
-{oDp!epxcdXI`w)5K})gvjb#mznLNUDqSY3E17RHd;)s)sy`#r12b<C=}~tuq(~WD{_<@(kX3R^#@$d2@pxnQIw*KF!^2WlHZ^x5
-1){^D;<X9pBFJ?73|6YnfEX2dDN$A9vnm|x<Kh)gIg_I12V>ny!|+aOk`~Q!rK-zrEGT|72#BMySM5{axSdOag;5SA$d!Qo=zWQ*
-JO1}<K4gg<gOIeU$B9W<sUdo&vFqIIdsg>AuEH}LUI}0BoCs@?(%ZHkq(o!OKqw3WP4*TimVSPald<adB7+7gi#^IeTWX@TxEO~!
-bAR1WzM-+$76z1NJm9_3fGl7cDARSNgVk-GAc`x06Ed_x)XU5(wICxIaLkG>W_ou>o_tV_fIl?y3Ofk=)aln!`Cy&!%R>uNx7#MZ
-kw79=8(Caqh=sEt<))_=o^^uxG+uY?IC$!kV!3_JN_mz43+7dIamubNv3Qjx%5=B*0moU_qS2RTAkC-qF|>mlSNHd-4fZlc6vHE-
-ZZ@uhRGI(p0_&}v&gka&y_tVg-RVG@Ak{V_Fe|IcCb*1^uaI67;qxOGTX_Bs@!UEHj7-
-rWIjrBB>D15Qp_Q9nB0usEPruP#OXPOyKp(&T~*}E-
-=HV;95MsRBZNBWch<zMSDuD{2CF|Wi8zyH$M$BB1xOx;la`FOMTF3Bi<ZKj%B&{hnN-DFc`+N2wlR{Az+}o2NhXa-tEOx(h5O1F?
-o^T*;U|B*cTX4iWmI?`TSp3$_1&GHx3?%HRW!MAmE@cZP~_j~*{PFwnTLu_Ji9HDoPMTfxTc>*>)Dz@57`tF>ShbRu}Eegnf7F{j
-ias3a=0AciObq^iSMhHTv|qYN)(y&)w2B6gWDvdQ*&Q|I7L%ln8W1ELr(ej&(szYmsxrmwZe{P&__o1e$7-
-j@K{!5=wJys59~vzFt91BvgE-;BLdul$-
-LzBMQPkI`6`wSTnZG=p0+O@O&JG)&jHYhouo}@U&BXkqRBECZANFgv&b@h?93rEK+h$p%T$!RbC%c|BtHf<7(-6r-
-R3+@F6d%%=R9B+l&*_RsX#O$9}SaJfSf(&=E(*3;(}cTTuBL~aJf3wS+(t-
-DEEfQ1%VIkm#Y%1n07*ljDS)q(Kkg@W>YDdnL+pY20+Go)1rHQBVq~xGJ{T>5`F7JOmd$4$yMSZuVTTYh*hO<$t9X3Z$}tM;i{;B
-$Ta4Bh@YIBwE#Guka-T+%po@*IgdI7FeJNzfn+?G@G^?bAu{kZmZ2$C3&^xP=Un(=qoN)zC%c;$cu3xfA~V2f-DiN<-
-I~p{keg`R02~cEPd=aAKrS32^H_2P%gp_`Yiy6I1WbSdWEy*Vs3#WyxdJSf#-4cU$&lHW!A!o2BXejC`)<i}E?KON%%Q+j1~d6-
-at_+P&#p-
-93BK86JeSO%SHm?zwVceuH9{o02IjT7DH(nn^`sQHLaxI#LK#Oc0PCuJ<QI|T91OO^^HKc_kZgv`kQWyoa@9Y|C4$TWnYphPD}Wo
->y=3UHa_uV-<R7nM*1-hMS#j+vKGYwlvE)nF47^QXb$RM^YI~Un6Xe+sj{LCu%-
-%$^U^Y4J6u3P>p8fRC{&`<J6RnfwWHQl6Y8H^q1AcCsjJl|TKM#}HY;t!GbZ9#W#~m*n&-
-+dkxkige=+F$g5t*!w9BRogB%6S7R)oll9ye=lUkXh=T}I9{GI*$wE-
-|`}oQ4$n!>F>~CATJ91<8w^bKJIENg0fFH+W!h@MHwN37MlckrN&+CaT3`+=R*Hn#lPgb2d?fg~`jcF;%p&HIef*lIt~*V^ZvcwU
-Lh&l8ZIToO86U8En=@=IRXSn#d_zlMkZz)}sxwwi%>iU1V~DC^}WltSgElu{MJyU!l8kH}1yWxEud(<7i!Aytb9_a9!YJZ6c@9<g
-V|R#%4*OLZv?&qT0r^Z0{u|k;zZ+RzuvAOZETuP*KvT-2*))O5FC>8~t-VMfAxKG|>wZXAHUbyRn=4Nw<-df=?!1-2T{K-
-LFBSA0s&!pLpjZzvwp^spomh69r-A%YXZAwbc7O-
-Z0s*=d{*O3|k!`$h=P{4wJ#HQs=Js+4>;kX8hs4!zt%IOLDWT+UzP8dLG`>;G>TLVfA148=EZV4A_0E?r@y_DCJq?@eDm^FT2K+C
-F+J)zEosK&s$VIYf~%qno~<#$vm=acUj{*k$VF*lm2OqkXfdSm9YT@fKk+3rVJW>u+&U7qcE8*1`8DW=yF>g+SGmMzo#gM?U|)A)
-36(*bHTk-2gGlZ>Som0;NI$T<QG|WX6BQ-Nup)qCDW<@o?tR+fb*NGAX3IXtlAqjDD-Pmv`^wlZ$gHCk42#yV98R`P#=92uy;IL&
-()+WD1}s1+++rQikv-n&id*jUx;O+S{!oX=P<o(vK0E`b1{F(h!`)+-pMnuj*;5`-{;-98+YTo8~+6w(b~5"""
+c-rlqU2G-Seb~>rLvtvJ+F>fUOWD*OCN`ox6cG&-2@TUb*EJC3rIOLUB!S_j+o0-
+00ntcXZR$18tk%G~t<lw6T_6b6`niaMycnoa&SqV&0vKHtHCh1`!db5xs;F$vdR1{&9M0)EbLQjB-
+1#_X=FH{Z;vPWS<?_zV@BZiib^hlIfO(s@d7HO+o40wJw|Seld7HO+o40wJw|SelX*H9u=FbxFK|qNE0CpZ#L~@(#5fZMZKf`+@Y
+mX@M9TM3wpO^dtx{)&z_YoxCGIG8c+6v5v`9Fn^q+&d{lPdxw<c2|fl>F>Giok-
+5nHrdfgs^XLD;G2JS06Fv9h?(KRFMfL<>qahl9qU3O3>W+V(qYeV3EmoO-@Phv|a~tNQe=6kXReqpF|F^L}=OIe_R&-
+jo!{3M93auOimp1oGK}kBd#^gR^bEk&^J)Pf3)~pK_t+R3?I<D8sxegD{%lxO>1#?)Heok>@2^;L71sBA3BNe2&=_h9SfnmDME)}
+6_~-KOVZEmEihVx+)KEuQ%Pa~PKZr)947h-
+zu?e!Hfb!Len+wy3;01CxFcp})q;+!2~(1?OEbdJ0NDyNy}v@_ZW6U?l*22F?++u`lsvtWD@UY1kZv*BdzoWE)yyR^TTw{A29n4_
+Fum`#PB#~%5e4AHHC!N4a$X<=M^c^_k<hxQk$E}RM=D`|3vez=(rf&3+JE_RyY7WZTPkZi?8RM;m^N663&wTGWm{V%w+|xOCt+Rw
+4jp;S{2byN<OlX~{Qk{a=j^SN{4R2>z?L*F%{@xXv)KLM?Kp1BGc!H)ExE1$4eH>c7T7)ZK;xFT9D8Xd=q$mjXy2X)g5-
+{C4B*9D?3o6^_~8_rpaX7Z<X$y%uswObW6DMgON(xpu0dtAnWkX&eR4$QZn&_9dD7mPXWWoBLJi0`DqBfo5Uhf>WPO24O<jWyK@u
+5G7P{Re_R${}>zo~R;1!lt<3zpk*VB>Qp^%B~3NXNDz75IU`}-
+_EiukvwNuHPLx+N8^t;oE<m^~8qiz@~Rd<<X&4DTLsY(~2aOb;|T4rfWB-
+{Vvj{d&ei<Jd8%=q>^yyh3kf`o%Y1snp+;brEGf_zjR`<nI@{`uvX-
+1?cOvKLYTp?lU%V7a$kRPN^GS60|gOSTY@QI%&lQv6RJr5$zGrBCZ+WKVJgmhxA!dU5!TR&6bgc%=Q<e%;KVia%Y<f^BN5c-
+{Q3kk*bRMe@Wf;G2yE-&xC5cB~|e~?-fN+!|*b_pGo!FAnruAS&?r@y-Rpd^ce-q2#U;yE-
+EMG60ti`QO<lIX7H1Jl@mFA#zh@^wbmj+mnH+Mp$2C8;TRY+VBd*Aqe8oKPV}SFSEv?qmnhhF{bWvxD_-ML#dXE6b|{Lu7c`aPp<
+uLd@@Bs@k!`F<dODH$AB#E`fpvjEd58uIMhyRWjH;40#mZMr>Luv&-
+5}M(<drDua;l$ZK;Nd%dTYe9Z#OuO4<wljAEOF(TM)AyGLLMeFBJu<y1}j32<hANY}OCFP7cLRThVbG9o&$U%HK<Fk(3}J(N~g(O
+i(5{;P2N|8=_$r=2NM{$fy4;(eRBTn?~5M+Tf`ll<b3Md9u$`z-
+AYwji&?mX*}rGpEcuq*oI4E_bn!82Zf&_VQAMnj(<gzT)xQ+ZcThwrxRs|6*XoWo$k}S-1CV?zjjD_{C0>*2n9L6P-
+K26$sDB*@Rmn)MYM$3Qp-(kJ|y)gA$7Wx6*<)2X-
+a)ncx&g2k9l9NtDlzdsF9qruGADBq96_4DxL$A$mD}0K1=@*^HDZAITpe{>JkMZ$(fgF8dK9x`%dC-qf3#BZbWhN60s5^3D@ZV_^
+@$)5Bs2ldp6RK+2m#rlEAF1R<6g)zEW>IE6jzgz=Iv?j<3gw(6_QzvDsECsAP`P7kQl()KBX4c?a@-XZfy8-
+@#6!2EFJ4w0$a=WA4;a?N})Gul7!*bnjV``hSxN`LM1(OcSOml@m(}6C-r1X`qYCU(EFES4%f>3;nC4_XS{?a#Z-
+~Y3wG(aFaxszq<+}gf$gnB--5Nuqx$9u3^ln$(;s5_MW#FZYInVncT%sxdr9$6K0QH_GdND?p|Sd*UxgNl|t?iR#f<7PIr+RVBVi
+NN<L{sVoFAP1=Wt@;gzF(QETAuB!0|e_Hv)dv?^0EamnyqAwEa3_VFn(hhk>V3({>~!#XL4;#JP<mgL#gsuNGKYqRhLe?jP}`P@U
+XggIbe;t%;ZG9MK4jY=^;_Nn9Ja%8YM^UZX?xs#mD(l70&f@L9S__1y<ZCK%D4KEo3`DEkJMBLU`-
+gXKK(1x4XpmdAk9<_aZtFr4GtbmdAfP@!NkbaeS0Q8@Ts1?|uaqS6~StMBwIp1E9IpPx#Hp*%LQ%cNK_g!-
+niycN(=tiPl>eT)S6Rt83$uZ5LU7L11?FfukbBV&hY7K+dC0zLB#UuuLK#iG&9tVjpvk>$_GD(9yhyH@4p*H=;U^7m|*gqXtW}{V
+g2)L9zlfMP*a2Z9cVz6OLGc#-VnTV3gDcmdm-cIKjMU*!*oM3dGd>4niEH&I<6{$=MP@8Ie(kN;BMPLHJDm@gyGw&+NIYjvzgY~M
+9sDQ`RfH2i%HVjK;`8>|7*s|Iz@RJ9kyNUziMR@HY2MF!^N^%z6p3&qM&Hu~Zxkpn-;$Ze2mvF|14)Tan-
+P^qQav@b^_xpjxJ0$y*IUpUHU(vBEsVJKvVw_OTjh5r78%(Q`>g9z@AET{G<V6D)Y?P)NqP3%wF3e=I%2#AI=@;_Bh|xt)vX7%<+
+P6RTOC{)<Ah==`6&@D`al0~m%?eHP0n9W1c%BR!3G$8XyS{SN<TEB5iw}ZAO~kW9G=OptmM(H*jHlLlG-
+u73acj4#;LHN(7o_8mZp|Mz4eGFll58Sli<#doGCQ@sN}+TSfGe;V2)eZ(e%uJR$vG)N<l65P98N>gk7Uyy17M5#9U2{(?{igrx&
+9NvgvIDe9!R#u*Aup?b6_*Y65r>^ChEw1%6zU3q%IFo+CBI#Id$_lA7SpC&r!*L8&nTFgpd`N3$N3`orvSkm}6kc%SUMha$k+a(4
+9;xdDeMs&#z%7E({EUN&j{|ey^6)XW!qCe%Il0j*?<f!W``;26uPA6b@0rsoF$GqaB-
+5Pu6^I2Op&VYs`D;h|4W_J?T@jXj3pjoKJ}L0MLR=T^GxDEJ?TMeMmXBo`?&@o{*?yj_#=J_4wR2lRpaTVRqty0!!M*xXBCl`TS3
+KTy%7}99{Nv=AW)<k~2l{V{u9KB=5!@L!nE_CHFyLtima)bHHWd**f$&I-
+!OH{djVTl&EjUt0f)^`NfY4ePXy@^3)b*=G|WOP=}Pm^=zVmlz)b?GR2?u@^>#_?w1B7?X>bn+edoTIjk9Tu4%iF+;Ni6dTG6|aG
+P=v=cWt$Wkj__ZnO2X|ASE2YhmIo!h#^vo7^d?1}w~be4vLpmey~{$vJu(tYUDP)%fg(1?E6ViHZZYaWbeWloaIr58TEcp*VcL#p
+hel{^tjRW2hSz<K6iHV6Du4I%VLF95b_7he<b`f@U`LQ8=t?XhqJn&y-apJ~;Rk@se`zs43r1@@(@Anb`+-
+<1+rD9SAvnZ4LJ+ewn3*HK}zUhqW_aDpiB6IC3N4f_!>#!^jUzO4^#_oaEl_YURLnlkUU2<RlOVHE<R4uL&<t8?#>uDKg&ZEzaz6
+$Q9wr8aXc?@P}xz!DH+fBZ^d1O)QP}Xrg?6G1IE3(F6l6%s#;Xq7=DR1~hPtzf?CPu{eyPi`fGaD7jUXs?0Z}n8lf+1lKWt{8@d>
+4&Y1a1h@JGH^S?Y(K-kdUpmg6!$-
+B#!*uEfO+SrN83pl@3ySJJNGJw3F^W`&?v>ncu!rsSk0Z8_*(_3F@uhVUiWX6$drq0JIt%&ttqk28l$nEGg*K5(&zt=$A(x>ziSp
+WMQtDZUt;}{T=jH6;C%xvn*Uiy$Uf=Gk8&6T(1_HAQV&~^$mnv%2;#`p##mvGI#kzFkW2uamK;QW7va!gOsuavY4FM)7_N{HHNmv
+KmJ&k(xxP8p*r(&jEY?MJF$b&X!M}b)~HK=n}@Gp1bnX9;xIm%pa6Eo!R3OCO^TH*KP!*WJ1$4tNcLx)We9+w|-
+`9B_ILFS~%*Tn$u0Ngy0nx)qUX47Ekb$`&yF~^>bGT)t$(zl+@W@m$~quRb>!W<bb^9(om+!8Yu)Ds#i115Q`a^xfRxz_XbxoDD`
+G_N5a@oHY&<EDSRzu&X-
+7YEhK(Hb@#jf?U}O^$>4y3_r<;8m4{qWG0P$6ksD`qXf}T%wg7PA|<bjSnw1Fk8(dDDi|OJ2zO?ufTmAbE=V5i=gn;-
+Sn@=SfcOPq|F#7Q?Kb$w}FRynP4KQDrF4wT?C%DC72uL(*0^O_mFjJ+-<|Rdz+wDS&=Zp(Oc=?f3GT~33rRDC7K-
+cK1rtRVd9RB0QWXQRLN}mdE)T&s|^Mr!<@|6f7!9)N#p(NiMWzk48~9Xtl>==?fMK4_(ze0$Qym~BS#3+LB%R1aeCRmthb022|2@
+k{s8Q=CBPQxZGtReczaTv#jgQ>6W4z29kZ-
+!RlYtM`FGd?((cTW$o!p&r+m!=LJqR_C$;(L*eWM_6>?6NN8^8g;Phb*MCNAIpo+L#uV1Jvgo^eu*Th}x$N@cU&=uC5Og_$dqwwR
+4uhxfBEW!K&e;hjeA?U;GG%|mpRMGtPS|<-
+n#jq;XI7*f~Y~5wESvxa_qat%LiWz@ieCm_uYOTVW)V9gl?|XZ(H~q@rku6eHtFtMtNdlml^iM3sdaRZiSB)T*nO*KU5L>l<v%lM
+j*H2W;U$0nfRjC{Hr1zY>_%)kPJ8*vk;KQCnRB3)#eo9%)OQ80v=c!2Tl6OKDxU;kFN4<*A@1tZHKAaTLxru+ccG9lTM|EAo{V3^
+HnBtnX4(+clIV-6cCi)c<<w1DV%6y9cOMQl9F<mtK4h#nS-bM|xu|1)Y@Re5Ps8*qIG-
+4fM9pl>%gBs?ANh@+{`pS`SRr&n#V!L=S|0$i!?dvrmsB_SpW;-+O!4tC8w-
+#DtPV9ZHR?Gmn=j+0$1oJCVJk841$XqO2RXghSg@c;3#b{^7p>}4wz`Qta7?7-
+R^AgO&H5+%UQfTQiDREyY`0>U;)C%`wRmIj)t(>WHpk>C?!wKev1}m&#4o%XUBwYsZgpKIw7#9r06(a3RORJfM%-
+V1p7I}J$I+(qrFS6C-ncJ8PsiITA<~5#&tAY8-
+!~(nynVs<7tcHsZ?&?4$?rz1R$y!O>J#M{U{Z^Ic&2>GqW8A30Ax}E28?C*yt=fx`3$!vDa?JK2ZtKNguDy5%=wilgc2{`4jnm<L
+HvQ}CO(i>|lUcGEzi96DP$5SRYPO9vF+1{Z1AxZmE*`L{Lu=Se;4;y}%=3eFNoL$I7a%eMgRQHtR}Nbbv*V9dl*78-
+V1jnC6nS{&^`;^92_tM+#C(_KM>O+zz0Md;h$dzaD76=A?{spT)z3}Im0^7vP-
+8Y5)==(|ow!Epb`Jcql_Vu~21dhF_IQ&&>Q}zky3DF)u|Scz;ki+~we8y0Z+W0`{*(r0SB?2+^+i@TGC?K18h~My!w0@DIiDofxA
+8rti?4SmGAeG9RDY`@LhiG?1#YNZoSdfN-cSgG@zfotgPC<MCyRWI-JCGnxJ1PfI`AD`a%R@CyVjh_mfv!^OeIjUPX~TeBQyE-
+=NbcQIl*#YelJ<6rNYdk_E;CQ^L%r*QvNtQXM(G!r4UkpnmX4r?-
+RB_<{cU4``MU=<)@n+$@d0Ag$`^BGqbNZ?PhPEfL+TZW<UI|$za`~f_sJv$#a`-
+L{`fVnkn;s%ACyF3sl^O$2M_+x@^$5TlV%!m~Xz6zGZ`N?4@La6xfsPzqT{GE%O*t=Je1K55)Z%_LpZ>#*U#6mNYSc2-
+>zILp)yQ%t@S4Dm}(Kgu0rTeHh9xUyUo#8M77ZGg5JNFnUZ=jzr^A+n7uoKLGX(VVKz@@{7q6S6AMqwnzR98qW=Zo|DYJ$4S8E%z
+SZ{yx$1o{mC^khpi=5nqh~Q$M#ctP8b?jWcHMqjh1R%o6iWK!<do4Y!@ehv}iLcA=%SqrrG)eBFSyCfF4QD=LjzX<)aad&bncx%*
+$-
+39_OP)e7cJ*tr?}Qb$c<lba>44Wo#KVET952QDTP96<z(oK$3Y4(kENFZooLUeO@*Qvhm<0Fde^<GgHOjgUx)c28_MlhHMZ7K(!0
+oU@Py)FneqZLz|>~GBay3;(y+d4T1nDmN%N1e<;K3aC3BwbeP=X+cQf}JC6$U2zu*ATiwr0b$*#GE8(_$n5G(mWJiTF|GqBfP==X
+(u?x&uQRZvHh;t~xe3CI=(ZxKLW!?qg5-~}%{+1=kuU*V+0RZ<+p)O`1!|d{rb?fjtIRd{c`mlCpw!bo0z-
+X$>4reyKo8&)3TU4xeW+%-ARhdDvb+pB9HoNsATRJf&-Vzp>TWhA&1oo4MsGh`x`!Gjr`T}G2V6i_Xv8FdLva`oDF-NU-
+!843iKI_6~EB}zl+}cs0S*)R#`Si`!q4M-)uu^ZpCih<wncEWRXbjmt_*$7g8Rl$}+%`Zz7Del~CeRT$mmbCnRc){)XAC_V-
+N*#wg6B>|_tw4!IRx1T;D+ky+BJIjGf&3Xr4NHH7+rMsRhT1?oh4wXo~H6-%`LZOn3IPsKjVOBZ;w%-ZYYsCCx-xiQ8gEZ8kpH8F
+6R9eQ;C^^F7C(7FR3!u_|f(g)k@4p@Y^?3{08warz?q&Cg#AAVNO284orjZf#Ss2R%W(~Df`l^wkF+ZFGg9n(~Li^kr_TPl$hh)V
+wn-IsGp*OyQN6U%ns;9<oj$77r0Y!$=;|v-
+yefl81qxg$8mLMj;p3fEGk$x$v1H}ST0c}u=$o7%FLuQvzG*x%v`U#SYfU~%8b=dBgCD0R)CM_VUZcKjeg{r#|d+X6BO-
++Vo7sb2kBtoxXYXlkQ`=1)O7=OX7=)$UEG$Gm|5^<a^577vYgGD(fRh~=e1GhM!pxThtg1{9Vgwom_r%Qo-FB3<jiKa+w#mToM3j
+u47u-
+2k$JLub488WUT2?w3+Q2X6{5Z;KjvSO%0F3v#CTI#%r%a~QDAl?$H6Khz=9Q=?{fYb>d0(Xg&zfGo~&Fw>>%dK%uXhxWIdeM<;D#
+v)o<gV6EjdBmniC#*Ms?=+qb$Pk8JfqZb1uzR*SC7H+Eq7{Z3-8QfN=b-
+$b360gN_*E@nqTo%sRv$r<1Z^EP7r+h5Vftaz1^b?Q`^FLpz&cuuIu9K>O`A>*nIwf{*QbD++gyc<>KD;=55ey)x`o@D2<$+n;OV
+m|5MHVXZlm^o<ZLDb6m%N>~~w+T{Zj*|Urc2(vf#mryo$Xq&fOD?M`((x^;A$dt2nY;Csvt#B5yBrgu%G|kWVD7O0M!!S63#W>H_
+_Z#~_tcr)r0?FXiAT<cj$~n{(b|3?V}ni~ISb6}+_N>@n_22~nQ<RxJIi`MG})P$whVJ6#$L*74{d|ick=*<w&jZ0)t#t=Bk3V}L
+V6I7fO$&@CL6p4-mTVtbR<1QPr_buHhx-ka;AhEs!r|?<);<&)D4*KrI;M^(|Xpr18SfS50dY04J~JoF5ypZ(<<jhSd$DrNSV!{n
+PHGf?LA56kN@qOdQrNv&y!&Gdomk^e6CeD^8M|~vP)Koc@i}PuNSi!7MUdmpi%8al0=5~z|2Nu6mlaY>dKrh5tEr5@AlIT0#%vqW
+@a`yzKz=H=Ql7YzAn<bVyo`er?v@<(;LGwTgg%AiJT!m*EK^*e*wVXvLr%E4{p;%1r@_>eID4B&^fK;nSNoA1wvHNjn=&-
+YF$~H&{5{wgN8xMY!{gA&dkXRBg?JKedP>Fa=y?lLlP2=KLXGhR?fgT3(V&_GkXd1JHT*Ya!BqFU0B8pi*6pmuFTn?>!!mN*ws5}
+f3YWX07}eV<(#}QHp$g(uHSj*dfMRS60_lq6-
+%il<{)9N&+oP`^px`^4{Xvd9@WoWO__N|xSknYg#9Anlbj;IiQ6r7r)$zlw8``1Cgz@UHu+M^oO#@_xFKx97dDP1N1aR0nf|(_l5
+RA3UAveB*|i_+%M4vZ7c(j*^#b!jG2`#c3|#SGDZ^_i3_~gA@?gb5G2`zY2)XE-
+)WV#OY2D=3(I&29J|Rt;pULO_Idj0)bvvDyvvt#%5$4SQN0<`srpLc(Vul`@j<nh(tt(Vx;>=Ch-u5qwb=(a}ux%-
+3@Lbd}bmvJ@%4}sPut#4l);3o9%h}Fi_v1^jMWGwIAbv?VOp<zzuUyqtCrH}@yY(CV@5^l!Xa!~?tw{@Ok#8vF`wbx;C324EB)3e
+lmtzjNx$b4^km-
+z?m{%K_y?EAKES*LZX<!z{lXyWct#f!8bD)?Uoom!*FJ05#qR^%kGneKT%DzG3_B=)AQJb8TGp$eny7{^w|J_@Km*Qt}-
+0PWy7JXfOntCiA6n2Y)B!K1dl3X`X8nzWnb>k-8i1%oSZ)itdnJ13d$VgL(D@)mLVh%IrZLqf5k=d?hcCxb~q{f(}m=R|-
+Q!yaYkr`DohuLK`jnc);*D&VHX2Uyd+)cu&WcCGSq!<R>MviRV7Grk1$+?=@6PaC2euEzZ39`ff&Nozg8h1G;AAe+JWr$IM8R~L&
+CW<(-0h_9TO{GJ#ln3R^+@(-
+vUH+LnJAO7ZfNU}Ua{axVMzPCBV_CU_<8Cks##<W53&+Yuz}W%ljSkFiC37T{MbaLeqe(f^yZ`;>jfR?r&|s-
+nYvn%`MnJSM+w!&S#$mrwt=7zcDllUm%t)FUHVz5n3TAGQ_K{$mTI6g<F|V{T+ZD`Qw)U~Op2gMWq5I33@3jyWZJW!~J`}zU*20W
+rn2qMxO^No3vjzlaexy{WQJ*Qwad~WJT{YiGlO(smoCpG66{Mnv84#~LHdB#qFG(>wg)f-
+g^hG0g&=6}u29|?Ka5Ip!Rt4syo3$(sHHAP^v!y1HHO+zv-
+4Zhtej0??DlxAsGZS&|uWDvbFSFTRnHskYzZcgca~E24lD=MMqjd($2(--
+FkE@K%6q%t^1+bAhC?8vli$}nw%rEL<22#vc8?#@s>moD%Mi;a(V;SZ~8w|@wE!Qw#+|jAfZZGD@EXDsC=C%K>vn%ULS!!*&UW%n
+i@Sa#mlD@31TWIa~lry;=O<1gxrm?n_F@N?~wJ9{P3(RA6=G&nZ^V%ZNXoWrHe9y0EMpl-Lt^sYjK_AgmpJOo^j_4UP=1VY>^YUx
+@<eY8@zTH*M70lV+FEJ}jm_L148*@@zgm;%}%hgb6MwcltBYpxPYmTu6^m*unxnAAiLEB{PjlvD1EJ?hOGb`_R*_d*~ux68mJl8g
+{`Eo6Do{hN6`V^Woqo!T9QHyREenAL1^BTyrk>JZ3on2gIBsap^$px^5*(8<BAYo4YlE0ymncefrY_~-
+9goD0@!aEX}x3ZI%7r^@~nwe>06OCZB(ZxZVq?UOTjFO*B@E=ySGw%}ugHFulg&YNDVDl9v%i!rx=wp7xi<zm;9tJz=h0#f7oJ*a
+GHW>k01)uo4`j~&ykFyRdU(8fjtCn2IAuw;UiTH^V`K+st`FxNu*LGQynC<-
+ByG@XeT5W?ZjR^;c;{A7SG|f`BmE`PuB6FJLt{NJdcdxMpD|=1MNJ-
+9a_9IRsHgv$_hQ4GJ*mrJRYgx$Ew$`qos<z_`%&S>R_`F8uOXS*N%VZ~|MLx(01m=|_q<|69$ZV0vj$2miC^1|4p(bL{`5e~hIF_
+!!<Ca-vZMsqT@IuZkiuMB0$P6yRwv~x$i+pnCmmH;zr;2jGwj~*+8guruDPaC2W?t9C{32*u`eG<8m=Tx-Ilo@e=TUEJ+_qc?D={
+aVCi9Ia)8^D{wzo7Cv#qjE1<cN5gC7WBp+;X<K<eb|f{AP()qp4q;?Nn4*=;mJ4@<3s&fZow!nUik(qCrw8U_Sv*Xov;cR)F)Fy@
+PTnRAq%M-5qj-N9^Lb0-
+M!eb*O;l5?GQU>@#FRp#VZ?5+bc2eqFF>l}5R5v1Exs~%~ks2g?e4iS&_><pE4&}J0x$sIF49F#e#dp?^Jti)^(kQ`}<h%+d2_3d
+H$lK17eUCEjC=0_D_u398Xztpqj*AzqI*y(aN7id}TQOEp7OAkSQ9W-
+`OTm^*nRfvfuo%mVuyG}rbb<noQnBBa*JD5H<PgnjWg>}$Ya%PIzbC;98%)hL#?TQte3G)DQwiR}MQ3!)(#F;G;>SxBinCtu)G>D
+l@k{>|M3d{7N!ge56$<>G_vig~ge$2I>{Q_|aNRKE4&2xWMTQOVvNRhcgS8-q`w-
+@7*76)x8Y&!u}c5AXfLJn9=nW0YIuq5AgTqIK2`3Oa(1I#;I=a+OAbIX~$!aHeRoV0)lOe8{m%Z9P7u~>k5G1q@~(IP)d&VBdRz|
+P1U%GI^_B|~AS7{empcR2Gle%~88gE5CHder=Jiy0_iCdHOmxMw5hbwg#R7?XV?K3B#u0bC!9x$!`VbyLCBu_SbzALj-
+2`MUKAm;2sWNjJPkXC4-qwM>=yQiWOF4waajlyuA#%}SY{1S>kC_g|}EJ`9!mR*lX8hvQVvORSfrqs*~c#e5pb`|=iVj-zCTzwsK
+C#Q0gFD}I+m_uo#4ikzG7yuxN2vUP;MahvJ=d2&^gk1na`{z;RLnkt)*#ms<jSoISy$|lD3ADSp(oZN2mUxv!&W2=bV0xKlmfi#|
+kM_$u3f?Q%gwVOZ;rOn3>xgDS7=9(XYuRG8s&I@{y4zpCfKTu(A>^+VUxf?S($tI?|juoV)ua&v+g+qmq!YuZGvtz!goD;owu%2?
+`Xp&ie5ppxZbrRi;S0z~7zgTZzu1#O+$qXl$Psk0qx<VT>)ub=7jV2v*gMRRz#Y?>O^ufs_bG^H>RhYj>{kH>;IkQh(`)+c{sArA
+`WyYd9b!zyOK=|*lgYMA4{b{}tWV}s@qt(~76%Lj5v&8WSY{#I?m!0irvTMfum@SF90-
+c%T7qRIWw_{~n!)YqmQ#VliJd)bC(#D+bMq*qG@@FysxH1H@qoIJqDjdmGw}caf*aj<a4Z-
+Y6S!~#9D=G78?ked;a1drsLlHF|yW)R3JNd(+{(b`yB|#H~Vs$oW#<=>WT(#H+D?N?SB1(c*DX@ca!fd*$Nu7%^F9FM`Wp>V*8T?
+)`$&ZhEBsX!`({Ug*=2zs?x=BC0%{N#<0azVEH+&g6zuTG^gcZ!u6CUWd^uttRwv}`P7H!#$FK0^LZ=D<L!Q5J~Fo?TSU{2SAo0@
+acMrNcEQ`nLO8!nVCk8j=22r*H~>=c>lYx&D@T2vL8`x&9F#B3?)2D^FYTt>;|@l^|tE;G!u?9(wO>)6L{XMJ72gAQceOeke8vFm
+{DXo(v<?}Y!_ihc*}>teRan~<4YTwjDAvYoD3d|p_d9<!mQ8?=2Y`l|1L!jFv(eh<IPr#FszrAg+%%;2}9uMscZFVGHX|8S|*+jZ
+K1-_xZVv>i~-maJl88&)QpCG}BgLy6hyz#Oxt*ZaT<V&32BA!nr-
+l|?zr7KKb8j!Rg4fps4b4V5~votP~L3ie^ft1F?Wof+t4hMpl18qo^qS>sS+HWX@KdGnwvbe{0H^cNYMBxpzv4>m~26+2wo61za|
+tw=K$4KD75_bM1*mBMI8=G+;NfsTe%YBI2|Zft8|wiVoSALh0A)1G`8LopeZWmX9cmsfJ;zSw9=a$bq!x1LG5mO>cprO)<<V*vH6
+p)eIfN`-
+%3R(PK~XToewFkeuxbx+sAtBS<#BS}Sa!4f#9;8WdlHB2LOAZf6!kQq;v87hRqk~3Fju06kVak|V{;W71Rj=EE2mYgcE!XC3Ob55
+#uX55uIKALr1=FHKK3A8M;*LuW8R;*)Zys~*<(fI6{CFN|fEi=OGjEeyhI|XJ_j@cxCnlKA~v`3c^DKJl@QkGoOVUcfe-
+6$|SXTyA6ju|DXSAqFyoe75mGmcz&{d0@VOFEsMWOtCt4em#dyqrCK3wm)^W~Qf+f}MwySqLf%jz%MtWR4h%9P?gsfhjVN>T-
+>72Zfeo4yBo&O0HNiCyS}i=uv3NQbEAfN{acjsW2*Zsbe9!dwB!P6`{W_Y-Fs*1}7q+By;?2Llr9z(Im6et!jfhF^B5R?Bu+Xt#w
+^&V|8NoJ1|f7kIjzEW~Y*j9_FrcHl*hWPh_HUaji?CUD4S&QUZ&6gHp^;elqU>%yvm&a?D1}&6lRl9C2n}mDz3ab=sLxX++bOVm6
+g#F%8HZ$TQcC-s&9JlzO_ynLR~Ur^|6b=_N^JW*q-
+9QVLn_l$p&+=0&AGg(sgS%QJ`a%ra7|TZyxylR1#`TD~kZuIW+qT*M^3jH<*8W9CJ*>^$4!d|^7wu=r?0A{5syus)|#H+-
+pYC(B&BkiFk(!p_X51oK`UGjugFdr}6KFsqj^vpt@6G%`C<1d_~?RjTNX0b+`r)WWXJdP>m6`yR<NOKgla6tlwY#7C3aS73&Z2(z
+ce94g&gWuB?ReWUf+V-
+CRJ%#m(pUzRyu*($T%Lt&~#M`lm9w8wMNPRx#GW=EDe&K6|W0x3*)>c}ixLgh+{y)Mje>SYdPnWazZt6+Xl1GCwISvoMNOzrH(+-
+6gjD)ZxbaOO}qvx$cZDqZ9(E31#4y>6JQ&o#)I>xMEjBpP&My|JJs&D_Ut=$J?~ZRS8Pb0Djpj}UVxtDe$110F^<kh}<HkvT(<X0
+``s_GJ;AGiJ6G`ou`JuYm?<b|n$Qvt~vL-
+5yKTU0K8UI;7COoMC4FteI_v(u1j5zZ!@+cl$q`3bU`3xpnK3G~sX`9p)d)GRv1$%%Pdzmd)YMoH@5aiAja3B{ySe=5@)Jq7ccF7
+ZVzKi{=@#%w%S)=&fLCv_mn=D!;GF9ElFZJrib6kvS^#va~XXvdpd`b5L+kjyC2<iW#a_>R~>qCek=I!3A(CXIiRHg_&e=sGV8Tw
+6J25V`T3I1)5U+C6U>aR3sH=^+YCFE6_OBhE)vOR(!eC#d%z^=3R}<B-
+LjbgT6$Zbv5Qx7tCwgnL{~dOHmySff?(YF`AgOCFR0YrxC$S`%S|xTTSO3hthi1)m1P=%MNQcMib0SeVJV_a631_+<C)5L+88-
+2?r&}rt7MS=`k<7R8BWK9|dDhi`h2I%<z$CPTr{Kc;4;F91PApnG|-
+FlXZs7+da#5XTkg{Gsyh8o@t#wI5U`FMm?E__Zxg;;v#c5Z)Z;{cJoIS_43{$&uo!9Vab-
+9Ud&($4etdynS*ICTZUhHb~k3ks~ccCZCqmR;h!UL7R<2gf#hgv+FTK2{F!40xFfSYMcsg<ePvNcW~^%rTCNowh3U-
+%v#X6cIumtX@7jrF$oHlt=e0sj=WCYJo!Q%&5;NKpDSxroBSG}1r47XdgLGX)_)n+FY!ylcouk6_Gh;S74+q_1%+8dUO;Y!RQfRu
+(+_QTo%w0V!WV-Qidd$KbwZcAf4yL8ghM0V!u8)N`rpXLXHDq<X_BA!XQP`QddwIf|PHm$?PdYyq?wu90NnY<BPS1!LcTddz%~>&
+bxBPh2&Ydyl8)w99c4vnB)9hIl{8eWUJF=$fo(ppB{Mbc&Mka`Qgp~a=GC{jv7<A7@&QAAB&xjf9cE0kJvkECa_JV^Q)4EY#<Q~V
+qz_Y4~!af<Hz8wdrm&MK=^Aj`3{JH%ztMYel&yh3Ak$SYRk~7MYdWC&GF=b_n%%9g3yVu6kW8Tu_HqaEA|GFmTr>5vHKSs#OjJap
+<$=P#tOwP0B>cF%6XT;n?AuW7HDSyAbZswTRlKoBp<_s}IE@yaWh8*7Gf57)Q{lN^$dFfK@pBHy#OE=tEvqA9o#eXz&%=W*HW{&y
+A=QZUUqv<i5_wAXJ^XGj$bIgC^W3%TtmOdyac9&-$5+0O{aPiS+w##)SWAI1zE-Y-
+U;&*3Fp+~1P*SP}V*JlqI!1Wn~9)o$Cw|Seld7HO+o40wJw|SeldDGao=OP%oZO%n7Z~x!4g&AZX&mQtKb4{C48_gi|gV{s2zB6;
+kOW$~7){qVB#G5tde~A29lQZ<g*|Wgsg4ts}a%PX2%pUSp{mg^UBQv{CNopR@zcO6zj5^QFtvT~}2bgRo3(DW$Io;5>bKth?rsp9
+x<=*DMglwmsy?3;x>jv)JOTmPEznBEDeKo#8?!}uf*?bQB4bRZMag_0?hmJNm8^UQA4>%_#zM=0pfy4s;taC)UNSW;d$!AIj*y4X
+}X+F=En}^-?R+p{v&ZOmo9g+Ssc;mMGY-
+i?VGsgo@(3PfkU0=T6kr|QwjOLH|otlve)+XqVeH1itEVoJ8nzpG=mfzLSm5z6|TbTo}0`)N8?c#*2$>Y!4nW?0q2K~55U$W|L*o
+MLtC-
+f1i)?Ys$p%PQ=4BB4VtA(KY1Y0u5N$L37p7PQ*Y5{Okcu11Dx1>#ci;z=QT@K2pZ3XgT?!D0Y3c&ZI_mIqXQ=}5TQKX>R=l_&v?x
+!7_z`o!9#h2s%C#Ps^$HsP4R%axS+<S@F7caNTnX$Uy0^6EollDuzibL3<RV8MByASc>4hpfvF@9`a7JHa^&8?&hAXZ=w!l;+00}
+%}c4c{BP=Y*375b@0FP@#ZKsF=D#Ltxpvc9ZvUZSZM{M50Pz2J;=y6DH?6qky-3Dw37<_b&0Zw4DV?bu*&>eXq7!!;YnT*a{G-
+Gb=d{<DAfON8hm`tHEJfk_sx7A9ZG?#`1Qa6G4ZBX8ns=MzSwj8CgxCv6#nM#J3uhOHzD+F)%X#Yx!ay<B;ie^?MpgYpIXPkT!UM
+{m<F_O41GG9geV8k0hDZ#jN0<m*c7w_za^oTo8`AnaOmY8rn@|<e#^7LhUNydEgnJ=5-
+B;79_*9Rxu+_RMOOcQAG|CQC2C}0x*U{K9ulpR<x6h4x6$)hh+dC48|<cRY5lbu$9zaY{^@!N=K9dm|ft+T@1_F1vTBapi<7ZJs7
+i`r=!p3%s|?|<Ke{Yw1ny?eYP3!@q~$XuO>kntTh%?jC-YzK87o-usRHyXTx0OVeiSNSjJgcpoeet@bA`u5#@EzGx@E2Q-
+}=N>T+k}Gd(IK)}Y9>`fNvb=j#VXuJ5BfEny61wQnY8#e5ETHQ=GeT={OVz6HSVOT@8o+QFngbjQ2IJQd(>_BUY6&SkY)6-
+olD>o+zAM`mN;Ubm;ZR>>N;o}uBHtKP4am)oaT?iS-nG#%9-
+<eNY0_I?kOue&Meu`>+|tj>O=l*8q7LM$)0f^guTYtl}MQ<|{E&dj!@&CiHL%XO!s8`1iN(_k>q$a;3$7hevO`S#$<UPVN3<jn9M
+vpIZA(2XQ8!l^SSCzIH6reHf*=$FLI#?bDrI{L22*?*YK-
+#|{{mwhFR(90}|yqFF20Pw7syr46XvurGMVpWLG_riI28dx=4xp^%0m$MmhHz+L3GE;MKzv1>#4sv{(xn~$nH5092R<NLGYW3SD|
+LmxxlhJf@=i087nz*9rin+3&vd~%3=2Vz#1g)NcGZ7CONm~1%NY#*8S1dH9g}l+zal~JHI*MEs3U9i}m>*KTgFR*DKrnkRUKgP1v
+Ak)Exe!<AH@K|M?4qeNds8h=4B(_^hdP*cSkP0NAyY|y2l9LN%u$CkrPH}d&LH!=&D*@q+q})&yv^IZ&D*@q+q`vc{|~L>$fy
+"""
 
 
 def load_mask():
-    """Unpack the map, upsample to 0.25° and store each row twice so lookups need no modulo."""
+    """Unpack the map and store each row twice so lookups need no modulo."""
     packed = zlib.decompress(base64.b85decode("".join(MAP.split())))
     bits = bytearray(W * H)
     for i, byte in enumerate(packed):
@@ -107,7 +228,7 @@ def load_mask():
                 bits[i * 8 + j] = 1
     out = bytearray()
     for r in range(H):
-        row = bytes(b for b in bits[r * W:(r + 1) * W] for _ in (0, 1))
+        row = bits[r * W:(r + 1) * W]
         out += row + row
     return bytes(out)
 
@@ -147,15 +268,27 @@ def geometry(cols, rows, k, size):
                 y2 = y * ct - z * st
                 z2 = y * st + z * ct
                 lat = math.degrees(math.asin(max(-1.0, min(1.0, -y2))))
-                row = min(H - 1, int((90 - lat) * H / 180)) * W2 * 2
-                col = int((math.degrees(math.atan2(x, z2)) + 180) * 4) % W2
+                row = min(H - 1, int((90 - lat) * H / 180)) * W * 2
+                col = int((math.degrees(math.atan2(x, z2)) + 180) * W / 360) % W
                 light += max(0.0, x * lx + y * ly + z * lz)
                 # Ocean: sparse staggered dots plus a thin rim that keeps the silhouette smooth.
                 ocean = (px % 3 == 0 and py % 3 == (px // 3) % 3) or d > 0.96
                 pts.append((bit, row + col, ocean))
+            # Background: a soft radial fade from the outer colour to black under the globe.
+            # A wide band keeps neighbouring cells almost equal, so the cell grid never shows.
+            x = ((c + 0.5) * 2 - cx) / R
+            y = ((r + 0.5) * 4 - cy) * k / R
+            rho = math.sqrt(x * x + y * y)
+            if not pts and rho > FADE_OUT:
+                continue
+            t = min(1.0, max(0.0, (rho - FADE_IN) / (FADE_OUT - FADE_IN)))
+            f = t * t * (3 - 2 * t)
+            bg = "\x1b[48;2;%d;%d;%dm" % tuple(round(ch * f) for ch in BG_RGB)
             if pts:
                 v = light / len(pts)
-                cells.append((f"\x1b[{r + 1};{c + 1}H", color(v, True), color(v, False), pts))
+                cells.append((r, c, color(v, True), color(v, False), pts, bg))
+            else:
+                cells.append((r, c, "", "", pts, bg))
     return cells
 
 
@@ -166,11 +299,20 @@ def color(v, land):
     return "\x1b[38;2;%d;%d;%dm" % (int(25 * v), int(90 * v), min(255, int(230 * v)))
 
 
-def render(cells, mask, center_lon):
-    shift = int((center_lon % 360) * 4) % W2
-    buf = ["\x1b[?2026h", BG]
-    last = None
-    for pos, land_col, ocean_col, pts in cells:
+def shift_for(center_lon):
+    return int((center_lon % 360) * W / 360) % W
+
+
+def render(cells, mask, shift, prev):
+    """Draw only the cells whose character or colour changed since the previous frame.
+
+    `prev` holds each cell's last state (dot bits * 2 + is-land) and is updated in place.
+    """
+    buf = []
+    last_col = None
+    last_bg = BG
+    cursor = -1  # index of the cell the terminal cursor sits on, if known
+    for i, (r, c, land_col, ocean_col, pts, bg) in enumerate(cells):
         bits = nland = n = 0
         for bit, idx, ocean in pts:
             if mask[idx + shift]:
@@ -180,17 +322,29 @@ def render(cells, mask, center_lon):
             elif ocean:
                 bits |= bit
                 n += 1
-        buf.append(pos)
-        if not bits:
-            buf.append(" ")
+        state = bits * 2 + (nland * 2 >= n > 0)
+        if prev[i] == state:
             continue
-        col = land_col if nland * 2 >= n else ocean_col
-        if col != last:
-            buf.append(col)
-            last = col
-        buf.append(chr(0x2800 + bits))
-    buf.append("\x1b[?2026l")
-    return "".join(buf)
+        prev[i] = state
+        if cursor != i:
+            buf.append(f"\x1b[{r + 1};{c + 1}H")
+        if bg != last_bg:
+            buf.append(bg)
+            last_bg = bg
+        if bits:
+            col = land_col if state & 1 else ocean_col
+            if col != last_col:
+                buf.append(col)
+                last_col = col
+            buf.append(chr(0x2800 + bits))
+        else:
+            buf.append(" ")
+        # The next cell in the list is directly to the right only if it is on the same row.
+        nxt = cells[i + 1] if i + 1 < len(cells) else None
+        cursor = i + 1 if nxt is not None and nxt[0] == r and nxt[1] == c + 1 else -1
+    if not buf:
+        return ""
+    return "\x1b[?2026h" + BG + "".join(buf) + "\x1b[?2026l"
 
 
 def parse_args():
@@ -204,10 +358,18 @@ def parse_args():
     p.add_argument("-f", "--fps", type=float, default=30.0, help="frames per second (default 30)")
     p.add_argument("-z", "--size", type=float, default=1.0, help="globe size as a fraction of the window, 0.2-1.0 (default 1.0)")
     p.add_argument("--start", type=float, default=15.0, help="longitude facing the viewer at start (default 15)")
+    p.add_argument("--bg", default="14,22,16", metavar="R,G,B", help="background colour around the globe (default 14,22,16, dark green; 0,0,0 for black)")
     p.add_argument("-V", "--version", action="version", version=f"earth {__version__}")
     a = p.parse_args()
     a.fps = min(120.0, max(1.0, a.fps))
     a.size = min(1.0, max(0.2, a.size))
+    try:
+        r, g, b = (min(255, max(0, int(v))) for v in a.bg.split(","))
+    except ValueError:
+        p.error(f"--bg must look like R,G,B, e.g. 18,18,18 (got {a.bg!r})")
+    global BG, BG_RGB
+    BG_RGB = (r, g, b)
+    BG = f"\x1b[48;2;{r};{g};{b}m"
     return a
 
 
@@ -225,7 +387,8 @@ def run(args, mask):
         tty.setcbreak(fd)
         out.write("\x1b[?1049h\x1b[?25l" + BG + "\x1b[2J")
         out.flush()
-        size = cells = None
+        size = cells = prev_cells = None
+        last_shift = None
         speed, paused = args.speed, False
         lon = args.start
         prev = next_frame = time.monotonic()
@@ -234,13 +397,20 @@ def run(args, mask):
             if ts != size:
                 size = ts
                 cells = geometry(*ts, args.size)
+                prev_cells = [None] * len(cells)
+                last_shift = None
                 out.write(BG + "\x1b[2J")
             now = time.monotonic()
             if not paused:
                 lon -= speed * (now - prev)  # west to east: continents drift right
             prev = now
-            out.write(render(cells, mask, lon))
-            out.flush()
+            shift = shift_for(lon)
+            if shift != last_shift:  # the map moves in 0.25° steps; nothing to do in between
+                last_shift = shift
+                frame = render(cells, mask, shift, prev_cells)
+                if frame:
+                    out.write(frame)
+                    out.flush()
 
             next_frame = max(next_frame + 1 / args.fps, time.monotonic())
             if select.select([fd], [], [], max(0.0, next_frame - time.monotonic()))[0]:
