@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""earth — вращающаяся Земля в терминале, нарисованная точками Unicode Braille.
+
+Один файл без зависимостей: нужен только Python 3. Карта суши (Natural Earth 1:110m,
+сетка 0,5°) вшита ниже в сжатом виде.
+"""
+import argparse
+import base64
+import fcntl
+import math
+import os
+import select
+import signal
+import struct
+import sys
+import termios
+import time
+import tty
+import zlib
+
+__version__ = "1.0.0"
+
+W, H = 720, 360  # land mask: 0.5° per cell, row 0 = 90°N, column 0 = 180°W
+W2 = W * 2  # columns after upsampling to 0.25°
+# Braille dot (dx, dy) -> bit inside a 2x4 cell.
+BITS = ((0, 0, 1), (0, 1, 2), (0, 2, 4), (1, 0, 8), (1, 1, 16), (1, 2, 32), (0, 3, 64), (1, 3, 128))
+TILT = math.radians(23)  # camera elevation above the equator
+LIGHT = (-0.55, -0.45, 0.70)  # light from the upper left
+BG = "\x1b[48;2;0;0;0m"
+
+MAP = """
+c-rlqL2uo-
+5rC;xU@lPCL~jP_nE44QdU1i&+C%UA7hLqP*A#p4qOPSNi{?_SZ#`|1{)`@qwE`ELTfN5uEgBgqnmu*p`d|jpk|ilhPZWm~CHpN<
+)I22d^LyVL4QGZkLrOvDZrqK#aX0>lh7f|^A}*6WQOSQ$^$*e98aNk*e3acP*MMs+c>7OsJM^?wL7j`i@V`BoF=uBA#mNv{+Hb*M
+46d+_7FmctNJZ2`aMk^i3Z}`cZ%X1#Cuv~?9*~V#>D60zK66n-
+aW@bm;#%o7bCn^#%%u?Vrx<XR@_nt~VhHYdsQ~56t0<xA^Wsoahq_qt^5z&)UxYfaRA^Es*HW<{8MC}t79;vtQ6LQ21_7^|PHF>l
+w5g`)L>a?S&#(v5UPqI5m%V5x%9s=kBU@%TY89Pv3=H1uBrjRUQifO;Ku3BWUSMa6`VGu{nU5^Lou!xWIw7+Vx$~ZU;7XY|_X$tb
+J6K1?0c|7#4c=oEEtOcqx^N?i7=F-
+F23sk)_x?b@P`KZUYWoMn2m;DXYfE7l?W>2r`Qry@7rzzHu8fqP7^=zTK+DQ7^%Z9xa~9&8-
+!s}YMDWs*2$&W%so9q(x5HNLvy4;08^ReCymjL4a}V7&tBcBCQk$HDm#1Ww@8bzSq}`kduguys#B(dSlx5NxHflX0?X0y)lo=%LI
+#mqJ4!FpykP@C+<jcWir)Hj3Ymp=-Z3I=c-
+S#8jvY~=m7lp7m7r<DVC^Z5mr52JUChD(da47PR`|Fi5gJfanLygqj^&=&0v!5gKX}d0Ej&sX7`qoTRor+f;GHE|y<WhgU&}qi$K
+Zz7v&vHHvqO^}bC@(!^A)aZorNfuLVSDNo(wMbAADc$rX=iUMXZai99c)CdQ;xDsP?nsCva<~~&KP*Y(ku0kYd={G!j3kax8kk*D
+{JtX5*m-gkuk%vX=mVdfLtO3z1-lZYTn3rsWKVag-
+M{!17!K}40yHH_J{D;=FEF5<J2@nuE`0gej;R??3|H(R1GGO<;H_V?&qG`iQyoPlLk_0nQJ|7Rk!A`T&hP*k0%^~-
+>alOE3_#LGEnui%-5SFf{cz4edoUXs-m5+#;ohkG%7izN7G<#ucQ5-Y?COP=*ZNBUD6s_Hcgh-Sl9+_DwI=`a2s;k^rmqlqK5pyE
+?{-lmV)Y4W9WeD5*iv!21FKmMWA15HB`2r)L9&vgKCzqUcCByQfpRa`$-I$o48A$E0F=o7{kZ|s|am0CWsMeUgfK08|X(eSJN^-
+xil*{Zhdi7NRe*2D`#sXd1)4`U#Xv*1YeTh8x?+<ER*Ye$||VX=@y`-
+u`Hz0SJGgpgU}$9Px;942dlEQwBFx#9~$B$&DphD*@NTktU>)!@qKO9)V6Z@BXtrf`dXA}5L^!&woAuT+sfVALuy<uG-
+Wt~mV?Y%QO<4a>-@*gxs-AeQQi~b6-rg3tBc$p+4Vtt3Ct-
+p?u%l7GIkDXxT9_4sKX_zB%h7SamdF8U5TU~l@98n0GXxQn;d0R6F49n8%V}W_ozA{@{6unm|SX3KR<_7U&;tgohne)pXjOxlUuE
+J<g~JLiB<k+NBt`~<&V)%CMPg)^Y~$WZ2Mk~RsZF3u3v{e@Xwo2w*#M8E8#e!BXy3Z^Ndd+a{A0658s2YCM>Sghf7X|WCoGzJZkx
+4PK+#vLDnIY3pi1WArH04^KrS2vACEf{{w+_tn<Eig_Uf)nI`{5zVW~<OC2@7v}Tw`EZgUyuI0d{$?(@(5vJiGqo3OEx+v}S>ivk
++=mhTOQCl6w9&M0YqbwogQ#*%384D;29G`o7GTF#BGY&PCLSqNTOkp$X9mZs!n=#~XI6~YP3w`;~Zj{X8DcXc*&|6?K>fi1ej%%l
+Z)e6>lt%Q9qjx1m@+oz!wHiCTBxa8-
+~K8wA=Zb#{P+&sm)B_com$m`}soYhgcQF!`PFa6lNcGCwDWVYkBkjX{Y@bkp|tcoDlZeMqYC><AGr;(+8<=a+*Hk5i@aP$$Q!)}`
++aw1~%43R%>uqIQF$jQHA$jl)(=s-M?+7KRcjgl&Y%w1K<@5;|)DIz@ORSm6yQREWU<Vt+zb(G56e@;S<syD-
+G{5NkK;<^0hq>k|J+VvADQu3nlxC!6SkymCEFpZ8}aZjLY_V!Vn%%$srs<<kTu`kSJh1WL5+W})etEnh5;v?tfD$56V<~{pKskRm
+w8J>BxagddE{qI}pT(UH0smn*caKvzhK3qbU^&l3_2HH)$ZO{sd(!bT_C+{FrxNN_L*OL$#hsc|0UlPGlA6JQ&oCdXFdRGkn5)Pr
+H65dVZ)E_o_vK$v4a_AgD?u((uBv~MLED(NI`ghTVf2V3ydZr%oR$wojcwMl?@c_9*+1G&$Z~p{h<HLK%lN3~l9t4kW_$IL1$>n}
+BK@sG}r>I0!9&(MgLVLV#rpR)Ir6+44zZHR1Ff`i!MMIllOj$y{YRMau<P)&(6&SjiQyrnBV1za4Ze&*8j{C-z_k-
+)r67sIG<^8Ej<7_VZxNR}JyZA$oerNVo-CkYj)Cu*F@n~P$P3<PgYD-VIpC1KGLv?-
+FZU(e*L+<^uC6jvr(_q@hPJ<<$>x3OSWExCqBAH8m-
+I8&LtQ%u#AzoUm)x!z$g>k0s0GZ1lI3AT)&EpB7AA87_cuMJHL}pXuy{sj_A0iVIC#--
+pbuw^=f}zD;uCWQUR_;1^_Nyh2trH+~Tlr{`thd6Fa~3K>&y1OA^0)ejuh9olWQ3YYGB@s1#&}>GAR4s|vF{HX=AZ&^UB2B`_jDi
+9F_~7YvvZKlFS?~todr_l#zRJhr46q3L2w-^$-
+8)*>)xAxrLrm_Rh`KyNoK<Va=s$hO561#54s%HP>P&30dlq?mzsPObxKkcy7J=_WOG2L(B#7ya;{Bvm;UF_-
+=OHoS$jlCu!r6QaHG`&p?j8!Mr3safVUB_wY>)3H~`ktiMXMfjE3Bpo=OZEL1f#WIW|c^)}DLuZFaaZiBHJPyEDa^`U3J?{ggzIQ
+{oDp!epxcdXI`w)5K})gvjb#mznLNUDqSY3E17RHd;)s)sy`#r12b<C=}~tuq(~WD{_<@(kX3R^#@$d2@pxnQIw*KF!^2WlHZ^x5
+1){^D;<X9pBFJ?73|6YnfEX2dDN$A9vnm|x<Kh)gIg_I12V>ny!|+aOk`~Q!rK-zrEGT|72#BMySM5{axSdOag;5SA$d!Qo=zWQ*
+JO1}<K4gg<gOIeU$B9W<sUdo&vFqIIdsg>AuEH}LUI}0BoCs@?(%ZHkq(o!OKqw3WP4*TimVSPald<adB7+7gi#^IeTWX@TxEO~!
+bAR1WzM-+$76z1NJm9_3fGl7cDARSNgVk-GAc`x06Ed_x)XU5(wICxIaLkG>W_ou>o_tV_fIl?y3Ofk=)aln!`Cy&!%R>uNx7#MZ
+kw79=8(Caqh=sEt<))_=o^^uxG+uY?IC$!kV!3_JN_mz43+7dIamubNv3Qjx%5=B*0moU_qS2RTAkC-qF|>mlSNHd-4fZlc6vHE-
+ZZ@uhRGI(p0_&}v&gka&y_tVg-RVG@Ak{V_Fe|IcCb*1^uaI67;qxOGTX_Bs@!UEHj7-
+rWIjrBB>D15Qp_Q9nB0usEPruP#OXPOyKp(&T~*}E-
+=HV;95MsRBZNBWch<zMSDuD{2CF|Wi8zyH$M$BB1xOx;la`FOMTF3Bi<ZKj%B&{hnN-DFc`+N2wlR{Az+}o2NhXa-tEOx(h5O1F?
+o^T*;U|B*cTX4iWmI?`TSp3$_1&GHx3?%HRW!MAmE@cZP~_j~*{PFwnTLu_Ji9HDoPMTfxTc>*>)Dz@57`tF>ShbRu}Eegnf7F{j
+ias3a=0AciObq^iSMhHTv|qYN)(y&)w2B6gWDvdQ*&Q|I7L%ln8W1ELr(ej&(szYmsxrmwZe{P&__o1e$7-
+j@K{!5=wJys59~vzFt91BvgE-;BLdul$-
+LzBMQPkI`6`wSTnZG=p0+O@O&JG)&jHYhouo}@U&BXkqRBECZANFgv&b@h?93rEK+h$p%T$!RbC%c|BtHf<7(-6r-
+R3+@F6d%%=R9B+l&*_RsX#O$9}SaJfSf(&=E(*3;(}cTTuBL~aJf3wS+(t-
+DEEfQ1%VIkm#Y%1n07*ljDS)q(Kkg@W>YDdnL+pY20+Go)1rHQBVq~xGJ{T>5`F7JOmd$4$yMSZuVTTYh*hO<$t9X3Z$}tM;i{;B
+$Ta4Bh@YIBwE#Guka-T+%po@*IgdI7FeJNzfn+?G@G^?bAu{kZmZ2$C3&^xP=Un(=qoN)zC%c;$cu3xfA~V2f-DiN<-
+I~p{keg`R02~cEPd=aAKrS32^H_2P%gp_`Yiy6I1WbSdWEy*Vs3#WyxdJSf#-4cU$&lHW!A!o2BXejC`)<i}E?KON%%Q+j1~d6-
+at_+P&#p-
+93BK86JeSO%SHm?zwVceuH9{o02IjT7DH(nn^`sQHLaxI#LK#Oc0PCuJ<QI|T91OO^^HKc_kZgv`kQWyoa@9Y|C4$TWnYphPD}Wo
+>y=3UHa_uV-<R7nM*1-hMS#j+vKGYwlvE)nF47^QXb$RM^YI~Un6Xe+sj{LCu%-
+%$^U^Y4J6u3P>p8fRC{&`<J6RnfwWHQl6Y8H^q1AcCsjJl|TKM#}HY;t!GbZ9#W#~m*n&-
++dkxkige=+F$g5t*!w9BRogB%6S7R)oll9ye=lUkXh=T}I9{GI*$wE-
+|`}oQ4$n!>F>~CATJ91<8w^bKJIENg0fFH+W!h@MHwN37MlckrN&+CaT3`+=R*Hn#lPgb2d?fg~`jcF;%p&HIef*lIt~*V^ZvcwU
+Lh&l8ZIToO86U8En=@=IRXSn#d_zlMkZz)}sxwwi%>iU1V~DC^}WltSgElu{MJyU!l8kH}1yWxEud(<7i!Aytb9_a9!YJZ6c@9<g
+V|R#%4*OLZv?&qT0r^Z0{u|k;zZ+RzuvAOZETuP*KvT-2*))O5FC>8~t-VMfAxKG|>wZXAHUbyRn=4Nw<-df=?!1-2T{K-
+LFBSA0s&!pLpjZzvwp^spomh69r-A%YXZAwbc7O-
+Z0s*=d{*O3|k!`$h=P{4wJ#HQs=Js+4>;kX8hs4!zt%IOLDWT+UzP8dLG`>;G>TLVfA148=EZV4A_0E?r@y_DCJq?@eDm^FT2K+C
+F+J)zEosK&s$VIYf~%qno~<#$vm=acUj{*k$VF*lm2OqkXfdSm9YT@fKk+3rVJW>u+&U7qcE8*1`8DW=yF>g+SGmMzo#gM?U|)A)
+36(*bHTk-2gGlZ>Som0;NI$T<QG|WX6BQ-Nup)qCDW<@o?tR+fb*NGAX3IXtlAqjDD-Pmv`^wlZ$gHCk42#yV98R`P#=92uy;IL&
+()+WD1}s1+++rQikv-n&id*jUx;O+S{!oX=P<o(vK0E`b1{F(h!`)+-pMnuj*;5`-{;-98+YTo8~+6w(b~5"""
+
+
+def load_mask():
+    """Unpack the map, upsample to 0.25° and store each row twice so lookups need no modulo."""
+    packed = zlib.decompress(base64.b85decode("".join(MAP.split())))
+    bits = bytearray(W * H)
+    for i, byte in enumerate(packed):
+        for j in range(8):
+            if byte & (0x80 >> j):
+                bits[i * 8 + j] = 1
+    out = bytearray()
+    for r in range(H):
+        row = bytes(b for b in bits[r * W:(r + 1) * W] for _ in (0, 1))
+        out += row + row
+    return bytes(out)
+
+
+def term_size():
+    """Columns, rows and the height/width ratio of one Braille dot."""
+    try:
+        rows, cols, xp, yp = struct.unpack("HHHH", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8))
+    except OSError:
+        cols, rows = os.get_terminal_size()
+        xp = yp = 0
+    k = (yp / rows / 4) / (xp / cols / 2) if xp and yp and cols and rows else 1.0
+    return cols, rows, k
+
+
+def geometry(cols, rows, k, size):
+    """Precompute every visible dot: its cell, bit, map row, base longitude and lighting."""
+    pw, ph = cols * 2, rows * 4
+    R = (min(pw / 2, ph * k / 2) - 1) * size  # radius in horizontal dots
+    cx, cy = pw / 2, ph / 2
+    ct, st = math.cos(TILT), math.sin(TILT)
+    n = math.sqrt(sum(v * v for v in LIGHT))
+    lx, ly, lz = (v / n for v in LIGHT)
+    cells = []
+    for r in range(rows):
+        for c in range(cols):
+            pts = []
+            light = 0.0
+            for dx, dy, bit in BITS:
+                px, py = c * 2 + dx, r * 4 + dy
+                x = (px + 0.5 - cx) / R
+                y = (py + 0.5 - cy) * k / R
+                d = x * x + y * y
+                if d > 1:
+                    continue
+                z = math.sqrt(1 - d)
+                y2 = y * ct - z * st
+                z2 = y * st + z * ct
+                lat = math.degrees(math.asin(max(-1.0, min(1.0, -y2))))
+                row = min(H - 1, int((90 - lat) * H / 180)) * W2 * 2
+                col = int((math.degrees(math.atan2(x, z2)) + 180) * 4) % W2
+                light += max(0.0, x * lx + y * ly + z * lz)
+                # Ocean: sparse staggered dots plus a thin rim that keeps the silhouette smooth.
+                ocean = (px % 3 == 0 and py % 3 == (px // 3) % 3) or d > 0.96
+                pts.append((bit, row + col, ocean))
+            if pts:
+                v = light / len(pts)
+                cells.append((f"\x1b[{r + 1};{c + 1}H", color(v, True), color(v, False), pts))
+    return cells
+
+
+def color(v, land):
+    v = 0.45 + 0.75 * v
+    if land:
+        return "\x1b[38;2;%d;%d;%dm" % (min(255, int(50 * v)), min(255, int(255 * v)), min(255, int(100 * v)))
+    return "\x1b[38;2;%d;%d;%dm" % (int(25 * v), int(90 * v), min(255, int(230 * v)))
+
+
+def render(cells, mask, center_lon):
+    shift = int((center_lon % 360) * 4) % W2
+    buf = ["\x1b[?2026h", BG]
+    last = None
+    for pos, land_col, ocean_col, pts in cells:
+        bits = nland = n = 0
+        for bit, idx, ocean in pts:
+            if mask[idx + shift]:
+                bits |= bit
+                nland += 1
+                n += 1
+            elif ocean:
+                bits |= bit
+                n += 1
+        buf.append(pos)
+        if not bits:
+            buf.append(" ")
+            continue
+        col = land_col if nland * 2 >= n else ocean_col
+        if col != last:
+            buf.append(col)
+            last = col
+        buf.append(chr(0x2800 + bits))
+    buf.append("\x1b[?2026l")
+    return "".join(buf)
+
+
+ARGPARSE_RU = {
+    "usage: ": "использование: ",
+    "options": "параметры",
+    "show this help message and exit": "показать эту справку и выйти",
+    "show program's version number and exit": "показать версию и выйти",
+    "%(prog)s: error: %(message)s\n": "%(prog)s: ошибка: %(message)s\n",
+    "argument %(argument_name)s: %(message)s": "параметр %(argument_name)s: %(message)s",
+    "invalid %(type)s value: %(value)r": "недопустимое значение %(value)r (ожидается число)",
+    "expected one argument": "нужно указать значение",
+    "unrecognized arguments: %s": "неизвестные параметры: %s",
+}
+argparse._ = lambda msg: ARGPARSE_RU.get(msg, msg)
+
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        prog="earth",
+        description="Вращающаяся Земля в терминале (Unicode Braille).\n"
+                    "Клавиши: q / Esc / Ctrl+C — выход, пробел — пауза, + / - — скорость.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("-s", "--speed", type=float, default=12.0,
+                   help="скорость вращения, градусов в секунду; отрицательная — в обратную сторону (по умолчанию 12)")
+    p.add_argument("-f", "--fps", type=float, default=30.0, help="частота кадров (по умолчанию 30)")
+    p.add_argument("-z", "--size", type=float, default=1.0, help="размер шара как доля окна, 0.2–1.0 (по умолчанию 1.0)")
+    p.add_argument("--start", type=float, default=15.0, help="долгота, обращённая к зрителю при старте (по умолчанию 15)")
+    p.add_argument("-V", "--version", action="version", version=f"earth {__version__}")
+    a = p.parse_args()
+    a.fps = min(120.0, max(1.0, a.fps))
+    a.size = min(1.0, max(0.2, a.size))
+    return a
+
+
+def run(args, mask):
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    out = sys.stdout
+
+    def stop(*_):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGHUP, stop)
+    try:
+        tty.setcbreak(fd)
+        out.write("\x1b[?1049h\x1b[?25l" + BG + "\x1b[2J")
+        out.flush()
+        size = cells = None
+        speed, paused = args.speed, False
+        lon = args.start
+        prev = next_frame = time.monotonic()
+        while True:
+            ts = term_size()
+            if ts != size:
+                size = ts
+                cells = geometry(*ts, args.size)
+                out.write(BG + "\x1b[2J")
+            now = time.monotonic()
+            if not paused:
+                lon -= speed * (now - prev)  # west to east: continents drift right
+            prev = now
+            out.write(render(cells, mask, lon))
+            out.flush()
+
+            next_frame = max(next_frame + 1 / args.fps, time.monotonic())
+            if select.select([fd], [], [], max(0.0, next_frame - time.monotonic()))[0]:
+                keys = os.read(fd, 64)
+                if keys in (b"\x1b", b"\x03"):
+                    break
+                if keys.startswith(b"\x1b"):  # arrows and other escape sequences
+                    continue
+                if b"q" in keys or b"Q" in keys:
+                    break
+                if b" " in keys:
+                    paused = not paused
+                speed *= 1.25 ** (keys.count(b"+") + keys.count(b"=") - keys.count(b"-") - keys.count(b"_"))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        out.write("\x1b[0m\x1b[?25h\x1b[?1049l")
+        out.flush()
+
+
+def main():
+    args = parse_args()
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        sys.exit("earth: нужно запускать в интерактивном терминале")
+    run(args, load_mask())
+
+
+if __name__ == "__main__":
+    main()
