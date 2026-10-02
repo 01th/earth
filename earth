@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""earth — вращающаяся Земля в терминале, нарисованная точками Unicode Braille.
+"""earth: a rotating Earth in the terminal, drawn with Unicode Braille dots.
 
-Один файл без зависимостей: нужен только Python 3. Карта суши (Natural Earth 1:110m,
-сетка 0,5°) вшита ниже в сжатом виде.
+A single file with no dependencies beyond Python 3. The land map (Natural Earth 1:110m,
+0.5° grid) is embedded below in compressed form.
 """
 import argparse
 import base64
@@ -193,31 +193,17 @@ def render(cells, mask, center_lon):
     return "".join(buf)
 
 
-ARGPARSE_RU = {
-    "usage: ": "использование: ",
-    "options": "параметры",
-    "show this help message and exit": "показать эту справку и выйти",
-    "show program's version number and exit": "показать версию и выйти",
-    "%(prog)s: error: %(message)s\n": "%(prog)s: ошибка: %(message)s\n",
-    "argument %(argument_name)s: %(message)s": "параметр %(argument_name)s: %(message)s",
-    "invalid %(type)s value: %(value)r": "недопустимое значение %(value)r (ожидается число)",
-    "expected one argument": "нужно указать значение",
-    "unrecognized arguments: %s": "неизвестные параметры: %s",
-}
-argparse._ = lambda msg: ARGPARSE_RU.get(msg, msg)
-
-
 def parse_args():
     p = argparse.ArgumentParser(
         prog="earth",
-        description="Вращающаяся Земля в терминале (Unicode Braille).\n"
-                    "Клавиши: q / Esc / Ctrl+C — выход, пробел — пауза, + / - — скорость.",
+        description="Rotating Earth in the terminal (Unicode Braille).\n"
+                    "Keys: q / Esc / Ctrl+C quit, space pause, + / - speed.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-s", "--speed", type=float, default=12.0,
-                   help="скорость вращения, градусов в секунду; отрицательная — в обратную сторону (по умолчанию 12)")
-    p.add_argument("-f", "--fps", type=float, default=30.0, help="частота кадров (по умолчанию 30)")
-    p.add_argument("-z", "--size", type=float, default=1.0, help="размер шара как доля окна, 0.2–1.0 (по умолчанию 1.0)")
-    p.add_argument("--start", type=float, default=15.0, help="долгота, обращённая к зрителю при старте (по умолчанию 15)")
+                   help="rotation speed in degrees per second; negative reverses it (default 12)")
+    p.add_argument("-f", "--fps", type=float, default=30.0, help="frames per second (default 30)")
+    p.add_argument("-z", "--size", type=float, default=1.0, help="globe size as a fraction of the window, 0.2-1.0 (default 1.0)")
+    p.add_argument("--start", type=float, default=15.0, help="longitude facing the viewer at start (default 15)")
     p.add_argument("-V", "--version", action="version", version=f"earth {__version__}")
     a = p.parse_args()
     a.fps = min(120.0, max(1.0, a.fps))
@@ -279,7 +265,7 @@ def run(args, mask):
 def main():
     args = parse_args()
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        sys.exit("earth: нужно запускать в интерактивном терминале")
+        sys.exit("earth: must be run in an interactive terminal")
     run(args, load_mask())
 
 

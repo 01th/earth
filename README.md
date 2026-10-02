@@ -1,52 +1,61 @@
 # earth
 
-Вращающаяся Земля в терминале, нарисованная точками Unicode Braille, в духе `cmatrix`.
+A rotating Earth in your terminal, drawn with Unicode Braille dots. Think `cmatrix`, but a planet.
 
-Один файл без зависимостей: нужен только Python 3. Карта суши Natural Earth (1:110m) вшита в сам скрипт, интернет не нужен.
+![earth running in a terminal](docs/screenshot.png)
 
-## Запуск
+- One file, no dependencies: needs only Python 3.
+- Real coastlines from [Natural Earth](https://www.naturalearthdata.com/), embedded in the script. Works offline.
+- Round globe on any font: corrects for the terminal's cell shape.
+- Flicker-free, adapts to window resizing, restores the terminal on exit.
 
-```sh
-./earth
-```
+## Install
 
-Клавиши: `q` / `Esc` / `Ctrl+C` — выход, пробел — пауза, `+` / `-` — скорость.
-
-| параметр | что делает | по умолчанию |
-|---|---|---|
-| `-s, --speed` | скорость вращения, °/с (отрицательная — в обратную сторону) | 12 |
-| `-f, --fps` | частота кадров | 30 |
-| `-z, --size` | размер шара как доля окна (0.2–1) | 1.0 |
-| `--start` | долгота, обращённая к зрителю при старте | 15 |
-| `-V, --version` | показать версию | |
-
-## Установка
-
-**Arch Linux** — как обычный пакет, программа встанет в `/usr/bin/earth`:
+Works on Linux and macOS (on Windows, use WSL). Run it straight away:
 
 ```sh
-git clone https://github.com/01th/earth
-cd earth && makepkg -si
-cd .. && rm -rf earth
+curl -fLO https://raw.githubusercontent.com/01th/earth/main/earth
+python3 earth
 ```
 
-Для сборки нужны инструменты `base-devel` (`sudo pacman -S --needed base-devel`). Удаление: `sudo pacman -R earth`.
-
-**Любой Linux** — одной командой, без пакета:
+Or install it as a command available everywhere:
 
 ```sh
 sudo curl -fL https://raw.githubusercontent.com/01th/earth/main/earth -o /usr/local/bin/earth
 sudo chmod +x /usr/local/bin/earth
+earth
 ```
 
-Удаление: `sudo rm /usr/local/bin/earth`.
+Without sudo, use `~/.local/bin/earth` instead (that folder must be in your `PATH`).
 
-## Заметки
+To uninstall, delete the file: `sudo rm /usr/local/bin/earth`.
 
-- Чем мельче шрифт терминала, тем подробнее и ровнее картинка (например, `kitty -o font_size=8 earth`).
-- Нужен терминал с поддержкой 24-битного цвета (kitty, Alacritty, WezTerm, foot, GNOME Terminal и т. д.) и шрифт с символами Braille (U+2800–U+28FF).
-- Данные карты: [Natural Earth](https://www.naturalearthdata.com/), общественное достояние.
+## Usage
 
-## Лицензия
+```
+earth [-s SPEED] [-f FPS] [-z SIZE] [--start LON]
+```
 
-MIT, см. [LICENSE](LICENSE).
+| option | meaning | default |
+|---|---|---|
+| `-s, --speed` | rotation speed, degrees per second (negative reverses) | 12 |
+| `-f, --fps` | frames per second | 30 |
+| `-z, --size` | globe size as a fraction of the window (0.2–1) | 1.0 |
+| `--start` | longitude facing you at start | 15 |
+| `-V, --version` | print version | |
+
+Keys: `q` / `Esc` / `Ctrl+C` quit, `space` pause, `+` / `-` change speed.
+
+## Requirements
+
+- Python 3.8+
+- A terminal with 24-bit color: kitty, Alacritty, WezTerm, foot, GNOME Terminal, Konsole, iTerm2, Windows Terminal, Termux and others.
+- A font with Braille characters (U+2800–U+28FF). Most modern fonts have them.
+
+The bare Linux text console (TTY) is not supported: it has no Braille glyphs or true color.
+
+Tip: a smaller font gives a more detailed globe, e.g. `kitty -o font_size=8 earth`.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Map data: Natural Earth, public domain.
