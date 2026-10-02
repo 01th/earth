@@ -2,7 +2,7 @@
 
 A rotating Earth in your terminal, drawn with Unicode Braille dots. Think `cmatrix`, but a planet.
 
-![earth running in a terminal](docs/screenshot.png)
+![earth running in a terminal](docs/earth.gif)
 
 - One file, no dependencies: needs only Python 3.
 - Real coastlines from [Natural Earth](https://www.naturalearthdata.com/), embedded in the script. Works offline.
