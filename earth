@@ -18,7 +18,7 @@ import time
 import tty
 import zlib
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 W, H = 1440, 720  # land mask: 0.25° per cell, row 0 = 90°N, column 0 = 180°W
 # Braille dot (dx, dy) -> bit inside a 2x4 cell.
@@ -26,8 +26,8 @@ BITS = ((0, 0, 1), (0, 1, 2), (0, 2, 4), (1, 0, 8), (1, 1, 16), (1, 2, 32), (0, 
 FADE_IN, FADE_OUT = 0.82, 1.12  # background fade band, in globe radii
 TILT = math.radians(23)  # camera elevation above the equator
 LIGHT = (-0.55, -0.45, 0.70)  # light from the upper left
-BG_RGB = (14, 22, 16)  # around the globe: very dark green
-BG = "\x1b[48;2;14;22;16m"
+BG_RGB = (0, 0, 0)  # around the globe
+BG = "\x1b[48;2;0;0;0m"
 
 MAP = """
 c-rlqU2G-Seb~>rLvtvJ+F>fUOWD*OCN`ox6cG&-2@TUb*EJC3rIOLUB!S_j+o0-
@@ -244,6 +244,30 @@ def term_size():
     return cols, rows, k
 
 
+def starfield(cols, rows, k, size):
+    """Sparse, fixed stars outside the globe's fade band, as one string to draw once."""
+    pw, ph = cols * 2, rows * 4
+    R = (min(pw / 2, ph * k / 2) - 1) * size
+    cx, cy = pw / 2, ph / 2
+    out = []
+    for r in range(rows):
+        for c in range(cols):
+            x = ((c + 0.5) * 2 - cx) / R
+            y = ((r + 0.5) * 4 - cy) * k / R
+            if x * x + y * y <= (FADE_OUT + 0.04) ** 2:
+                continue
+            h = (r * 73856093 ^ c * 19349663) & 0xFFFFFFFF
+            h = ((h ^ (h >> 13)) * 1274126177) & 0xFFFFFFFF
+            if h % 1000 >= 22:  # ~2% of cells hold a star
+                continue
+            bit = BITS[(h >> 10) % 8][2]
+            if (h >> 14) % 7 == 0:  # an occasional brighter, two-dot star
+                bit |= BITS[(h >> 17) % 8][2]
+            v = 90 + (h >> 20) % 130
+            out.append(f"\x1b[{r + 1};{c + 1}H\x1b[38;2;{v};{v};{min(255, v + 25)}m{chr(0x2800 + bit)}")
+    return "".join(out)
+
+
 def geometry(cols, rows, k, size):
     """Precompute every visible dot: its cell, bit, map row, base longitude and lighting."""
     pw, ph = cols * 2, rows * 4
@@ -358,7 +382,8 @@ def parse_args():
     p.add_argument("-f", "--fps", type=float, default=30.0, help="frames per second (default 30)")
     p.add_argument("-z", "--size", type=float, default=1.0, help="globe size as a fraction of the window, 0.2-1.0 (default 1.0)")
     p.add_argument("--start", type=float, default=15.0, help="longitude facing the viewer at start (default 15)")
-    p.add_argument("--bg", default="14,22,16", metavar="R,G,B", help="background colour around the globe (default 14,22,16, dark green; 0,0,0 for black)")
+    p.add_argument("--no-stars", action="store_true", help="hide the stars around the globe")
+    p.add_argument("--bg", default="0,0,0", metavar="R,G,B", help="background colour around the globe, e.g. 14,22,16 for dark green (default 0,0,0, black)")
     p.add_argument("-V", "--version", action="version", version=f"earth {__version__}")
     a = p.parse_args()
     a.fps = min(120.0, max(1.0, a.fps))
@@ -400,6 +425,8 @@ def run(args, mask):
                 prev_cells = [None] * len(cells)
                 last_shift = None
                 out.write(BG + "\x1b[2J")
+                if not args.no_stars:
+                    out.write(BG + starfield(*ts, args.size))
             now = time.monotonic()
             if not paused:
                 lon -= speed * (now - prev)  # west to east: continents drift right
